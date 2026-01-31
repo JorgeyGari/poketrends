@@ -102,7 +102,8 @@ export class TrendsApiService {
    */
   async checkHealth() {
     try {
-      const response = await fetch('http://localhost:3002/health');
+      const healthUrl = `${this.apiUrl.replace('/trends', '')}/health`;
+      const response = await fetch(healthUrl);
       const text = await response.text();
 
       // Try to parse JSON, but handle non-JSON responses gracefully
