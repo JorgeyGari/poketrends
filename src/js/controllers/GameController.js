@@ -147,11 +147,15 @@ export class GameController {
    * Create Pokemon model from PokéAPI data
    */
   createPokemonModel(details) {
+    // Prefer speciesName for internal `name` to avoid form suffixes; keep `details.name` as fallback
+    const internalName = details.speciesName || details.name;
     const pokemon = new Pokemon(
       details.id,
-      details.name,
+      internalName,
       details.generation
     );
+    // set prettyName if provided by service
+    if (details.prettyName) pokemon.prettyName = details.prettyName;
     // Pokemon model exposes setSpriteUrl()
     const spriteUrl = details.sprite || pokemon.getSpriteUrl?.();
     if (spriteUrl && typeof pokemon.setSpriteUrl === 'function') {

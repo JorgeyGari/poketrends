@@ -86,6 +86,12 @@ export class Pokemon {
         if (data.estimatedSearches) pokemon.setEstimatedSearches(data.estimatedSearches, data.estimatedLabel);
         if (data.timelineSum !== undefined) pokemon.setTimelineData(data.timelineSum, data.timelineValues);
         if (data.avgScore !== undefined) pokemon.setAvgScore(data.avgScore);
+        // Accept prettyName or speciesName from data and prefer prettyName for display
+        if (data.prettyName) pokemon.prettyName = data.prettyName;
+        else if (data.speciesName) {
+            const s = (data.speciesName || '').replace(/[-_]+/g, ' ');
+            pokemon.prettyName = s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
         return pokemon;
     }
 }
