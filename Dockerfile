@@ -11,6 +11,8 @@ RUN npm ci --only=production
 
 # Copy application code
 COPY server.js .
+COPY services ./services
+COPY harvest_trends.js .
 
 # Expose port
 EXPOSE 3002
