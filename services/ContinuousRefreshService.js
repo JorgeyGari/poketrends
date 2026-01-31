@@ -20,11 +20,11 @@ export class ContinuousRefreshService {
     
     // Ultra-conservative rate limiting
     this.limiter = new Bottleneck({
-      minTime: 25000,           // 25 seconds between requests (2.4/min)
+      minTime: 45000,           // 45 seconds between requests (~1.33/min)
       maxConcurrent: 1,
-      reservoir: 2,             // Start with 2 requests
-      reservoirRefreshAmount: 2,
-      reservoirRefreshInterval: 60000  // Refill 2 every minute
+      reservoir: 1,             // Start with 1 request
+      reservoirRefreshAmount: 1,
+      reservoirRefreshInterval: 60000  // Refill 1 every minute
     });
     
     // Add jitter before each request
@@ -42,14 +42,18 @@ export class ContinuousRefreshService {
     
     this.isRunning = true;
     this.isPaused = false;
-    console.log('🔄 Starting continuous refresh service...');
-    
+    // Startup delay to avoid immediate requests on boot
+    const startupDelay = 5 * 60 * 1000; // 5 minutes
+    console.log(`🔄 Starting continuous refresh service in ${startupDelay/1000}s...`);
+    await new Promise(resolve => setTimeout(resolve, startupDelay));
+    console.log('▶️  Beginning refresh loop');
+
     // Run in background loop
     this.refreshLoop().catch(err => {
       console.error('❌ Refresh service crashed:', err);
       this.isRunning = false;
     });
-    
+
     return true;
   }
   
@@ -87,7 +91,14 @@ export class ContinuousRefreshService {
           continue;
         }
         
-        this.stats.currentPokemon = pokemon.name;
+          // Random pause when switching to a different Pokémon to mimic human pacing
+          if (this.stats.currentPokemon && this.stats.currentPokemon !== pokemon.name) {
+            const pauseTime = 120000 + Math.random() * 180000; // 2-5 min
+            console.log(`⏳ Switching to ${pokemon.name}, pausing ${Math.round(pauseTime/1000)}s...`);
+            await new Promise(resolve => setTimeout(resolve, pauseTime));
+          }
+
+          this.stats.currentPokemon = pokemon.name;
         
         // Fetch with rate limiting
         const result = await this.limiter.schedule(() => 
