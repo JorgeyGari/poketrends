@@ -1,6 +1,7 @@
 import Bottleneck from 'bottleneck';
 import fs from 'fs/promises';
 import path from 'path';
+import https from 'https';
 
 export class ContinuousRefreshService {
   constructor(trendsService, dataPath) {
@@ -195,13 +196,65 @@ export class ContinuousRefreshService {
   }
   
   async getAllPokemon() {
-    // Fetch from PokéAPI or use cached list
-    // For now, return placeholder
-    const pokemonList = [];
-    for (let i = 1; i <= 1025; i++) {
-      pokemonList.push({ id: i, name: `pokemon-${i}` });
+    // Try reading from local cache first
+    const cacheFile = path.join(path.dirname(this.dataPath), 'pokemon_names.json');
+    try {
+      const content = await fs.readFile(cacheFile, 'utf8');
+      const parsed = JSON.parse(content);
+      // Validate structure: array of objects with id and name
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name) {
+        console.log(`✅ Loaded ${parsed.length} Pokémon from cache`);
+        return parsed;
+      }
+    } catch (err) {
+      // ignore and fall back to network
     }
+
+    // Helper: simple HTTPS GET that returns parsed JSON
+    const fetchJson = (url) => new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        const { statusCode } = res;
+        if (statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`Request Failed. Status Code: ${statusCode}`));
+        }
+
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            resolve(parsed);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }).on('error', reject);
+    });
+
+    try {
+      console.log('Fetching Pokémon list from PokéAPI...');
+      const data = await fetchJson('https://pokeapi.co/api/v2/pokemon?limit=1025');
+      const pokemonList = (data.results || []).map((p, idx) => ({ id: idx + 1, name: p.name }));
+
+      // Save cache (best-effort)
+      try {
+        await fs.writeFile(cacheFile, JSON.stringify(pokemonList, null, 2));
+      } catch (err) {
+        console.warn('Failed to write Pokémon cache:', err.message || err);
+      }
+
+      if (pokemonList.length > 0) {
+        console.log(`✅ Fetched ${pokemonList.length} Pokémon from PokéAPI`);
+      }
+  
     return pokemonList;
+    } catch (err) {
+      console.error('Failed to fetch Pokémon list from PokéAPI:', err.message || err);
+      // As a last resort, return an empty list to avoid generating invalid names
+      return [];
+    }
   }
   
   async loadData() {
