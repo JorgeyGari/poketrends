@@ -13,11 +13,14 @@ export class PopularityService {
 
     /**
      * Get a popularity object for a pokemon name and country.
+     * @param {string} pokemonName - Name of the Pokémon
+     * @param {string} countryCode - Country code (default: 'US')
+     * @param {number} pokemonId - Pokémon ID (used for generation-based ceiling calculation)
      * Returns an object { score, estimatedSearches, estimatedLabel, rawData, ... }
      */
-    async getPopularityScore(pokemonName, countryCode = 'US') {
+    async getPopularityScore(pokemonName, countryCode = 'US', pokemonId = null) {
         try {
-            const data = await this.trends.getTrendsScore(pokemonName, countryCode);
+            const data = await this.trends.getTrendsScore(pokemonName, countryCode, pokemonId);
             // Ensure we return a consistent object
             if (data && typeof data === 'object') {
                 return {

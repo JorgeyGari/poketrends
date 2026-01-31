@@ -85,8 +85,8 @@ export class GameController {
       // Fetch popularity scores in parallel
       const country = this.gameState.selectedCountry;
       const [data1, data2] = await Promise.all([
-        this.popularityService.getPopularityScore(pokemon1.name, country),
-        this.popularityService.getPopularityScore(pokemon2.name, country),
+        this.popularityService.getPopularityScore(pokemon1.name, country, pokemon1.id),
+        this.popularityService.getPopularityScore(pokemon2.name, country, pokemon2.id),
       ]);
 
       // Attach scores and extra data

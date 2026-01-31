@@ -138,8 +138,9 @@ export class GameBoard {
       this.animateCount(rightValueEl, rightTarget, 900, 0);
     }
 
-    const leftAvg = (pokemon1.avgScore != null) ? Number(pokemon1.avgScore) : null;
-    const rightAvg = (pokemon2.avgScore != null) ? Number(pokemon2.avgScore) : null;
+    // Show the actual popularity score that drives game logic (weighted 0-100)
+    const leftAvg = (pokemon1.popularityScore != null) ? Number(pokemon1.popularityScore) : null;
+    const rightAvg = (pokemon2.popularityScore != null) ? Number(pokemon2.popularityScore) : null;
     if (leftAvgEl) {
       if (leftAvg != null) {
         if (leftPreserved) leftAvgEl.textContent = this.formatNumber(leftAvg, 2);

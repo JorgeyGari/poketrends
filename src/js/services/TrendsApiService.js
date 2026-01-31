@@ -1,6 +1,6 @@
 /**
  * Trends API Service (Frontend)
- * Calls the Node.js backend to get Google Trends data
+ * Prioritizes pre-computed local data, falls back to live API in dev mode
  */
 export class TrendsApiService {
   constructor() {
@@ -9,51 +9,128 @@ export class TrendsApiService {
       ? __API_BASE_URL__ 
       : (process.env.VITE_API_BASE_URL || 'http://localhost:3002');
     this.apiUrl = `${baseUrl}/trends`;
+    this.dataUrl = `${baseUrl}/data/trends`;
     this.cache = new Map();
+    this.localData = null;
+    this.dataAge = null;
+    this.isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    // Load local data on init
+    this.loadLocalData();
+  }
+
+  /**
+   * Load pre-computed trends data from server
+   */
+  async loadLocalData() {
+    try {
+      const response = await fetch(this.dataUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load data: ${response.status}`);
+      }
+      
+      this.localData = await response.json();
+      this.dataAge = new Date(this.localData.lastUpdate);
+      
+      const totalPokemon = this.localData?.metadata?.totalPokemon || 0;
+      const successRate = this.localData?.metadata?.successRate || 0;
+      
+      console.log(`📦 Loaded pre-computed trends data: ${totalPokemon} Pokémon, ${successRate}% success rate`);
+      console.log(`📅 Last update: ${this.dataAge.toLocaleString()}`);
+    } catch (err) {
+      console.warn('⚠️ Failed to load local trends data, will use live API:', err.message);
+    }
   }
 
   /**
    * Get Google Trends data for a Pokémon
+   * Priority: 1) Local data (if fresh), 2) Live API (localhost only), 3) Fallback
    * @param {string} pokemonName - Name of the Pokémon
    * @param {string} countryCode - Country code (default: 'US')
+   * @param {number} pokemonId - Pokémon ID (optional, used for generation-based ceiling calculation)
    * @returns {Promise<Object>} Object containing { score, estimatedSearches, estimatedLabel, rawData, ... }
    */
-  async getTrendsScore(pokemonName, countryCode = 'US') {
+  async getTrendsScore(pokemonName, countryCode = 'US', pokemonId = null) {
     const cacheKey = `${pokemonName}_${countryCode}`;
     
-    // Check cache
+    // Check in-memory cache first
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey);
     }
 
-    try {
-      const url = `${this.apiUrl}?pokemonName=${encodeURIComponent(pokemonName)}&countryCode=${countryCode}`;
-      const response = await fetch(url);
+    // Priority 1: Use local pre-computed data if available and fresh
+    if (this.localData?.countries?.[countryCode]?.[pokemonName]) {
+      const entry = this.localData.countries[countryCode][pokemonName];
+      const lastFetched = entry.lastFetched ? new Date(entry.lastFetched) : null;
+      const age = lastFetched ? (Date.now() - lastFetched.getTime()) : Infinity;
       
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
+      // Use if < 30 days old
+      if (age < 30 * 24 * 60 * 60 * 1000) {
+        const data = {
+          ...entry,
+          source: 'local',
+          cached: true,
+          pokemonName,
+          countryCode
+        };
+        
+        this.cache.set(cacheKey, data);
+        console.log(`📦 Local data: ${pokemonName} = ${data.score}`);
+        return data;
       }
-
-      const data = await response.json();
-
-      // Cache full data object
-      this.cache.set(cacheKey, data);
-
-      // Log result type
-      if (data.cached) {
-        console.log(`📦 Cached trends: ${pokemonName} = ${data.score}`);
-      } else if (data.fallback) {
-        console.log(`⚠️ Fallback trends: ${pokemonName} = ${data.score}`);
-      } else {
-        console.log(`✅ Real trends: ${pokemonName} = ${data.score}`);
-      }
-
-      return data;
-      
-    } catch (error) {
-      console.error(`Error fetching trends for ${pokemonName}:`, error);
-      return { score: this.getFallbackScore(pokemonName), fallback: true };
     }
+
+    // Priority 2: Fallback to live API (localhost only for dev)
+    if (this.isLocalhost) {
+      try {
+        const data = await this.fetchLiveAPI(pokemonName, countryCode, pokemonId);
+        this.cache.set(cacheKey, data);
+        return data;
+      } catch (error) {
+        console.warn(`⚠️ Live API failed for ${pokemonName}, using fallback`);
+      }
+    }
+
+    // Priority 3: Use deterministic fallback
+    const fallbackData = {
+      score: this.getFallbackScore(pokemonName),
+      fallback: true,
+      source: 'fallback',
+      pokemonName,
+      countryCode
+    };
+    
+    this.cache.set(cacheKey, fallbackData);
+    console.log(`⚠️ Fallback: ${pokemonName} = ${fallbackData.score}`);
+    return fallbackData;
+  }
+
+  /**
+   * Fetch from live API (dev mode only)
+   */
+  async fetchLiveAPI(pokemonName, countryCode, pokemonId) {
+    let url = `${this.apiUrl}?pokemonName=${encodeURIComponent(pokemonName)}&countryCode=${countryCode}`;
+    if (pokemonId != null) {
+      url += `&pokemonId=${pokemonId}`;
+    }
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // Log result type
+    if (data.cached) {
+      console.log(`📦 Cached trends: ${pokemonName} = ${data.score}`);
+    } else if (data.fallback) {
+      console.log(`⚠️ Fallback trends: ${pokemonName} = ${data.score}`);
+    } else {
+      console.log(`✅ Real trends: ${pokemonName} = ${data.score}`);
+    }
+
+    return data;
   }
 
   /**

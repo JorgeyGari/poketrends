@@ -1,2 +1,24 @@
+# Frontend dependencies
 node_modules/
+dist/
+
+# Environment variables
 .env
+.env.local
+.env.*.local
+
+# Backend (has its own .gitignore)
+backend/node_modules/
+backend/data/pokemon_trends.json
+backend/data/*.json
+backend/*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
