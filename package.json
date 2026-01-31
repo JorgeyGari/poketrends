@@ -1,0 +1,26 @@
+{
+  "name": "poketrends",
+  "version": "1.0.0",
+  "description": "Which Pokémon is more popular? A game using Google Trends data.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "google-trends-api": "^4.9.2",
+    "vite": "^7.3.1"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.2",
+    "prettier": "^3.8.1"
+  }
+}
