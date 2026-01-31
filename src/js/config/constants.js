@@ -4,22 +4,23 @@
 
 export const GAME_CONFIG = {
     MAX_ROUNDS: 10,
-    ROUND_DELAY: 1500, // ms before next round
-    ANIMATION_DURATION: 300,
-    POKEMON_LIMIT: 151, // First generation only
+    ROUND_DELAY: 3000, // ms before next round
+    ANIMATION_DURATION: 500,
+    // Set to 0 to fetch all available Pokémon from the API (all generations)
+    POKEMON_LIMIT: 0,
 };
 
 export const COUNTRIES = [
     { code: 'ES', name: 'España', flag: '🇪🇸' },
-    { code: 'JP', name: 'Japan', flag: '🇯🇵' },
+    { code: 'JP', name: '日本', flag: '🇯🇵' },
     { code: 'US', name: 'United States', flag: '🇺🇸' },
-    { code: 'DE', name: 'Germany', flag: '🇩🇪' },
+    { code: 'DE', name: 'Deutschland', flag: '🇩🇪' },
     { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
     { code: 'FR', name: 'France', flag: '🇫🇷' },
-    { code: 'BR', name: 'Brazil', flag: '🇧🇷' },
+    { code: 'BR', name: 'Brasil', flag: '🇧🇷' },
     { code: 'MX', name: 'México', flag: '🇲🇽' },
     { code: 'AR', name: 'Argentina', flag: '🇦🇷' },
-    { code: 'IT', name: 'Italy', flag: '🇮🇹' },
+    { code: 'IT', name: 'Italia', flag: '🇮🇹' },
     { code: 'CA', name: 'Canada', flag: '🇨🇦' },
     { code: 'AU', name: 'Australia', flag: '🇦🇺' },
 ];
