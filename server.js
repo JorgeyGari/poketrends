@@ -16,8 +16,72 @@ app.use(express.json());
 // In-memory cache for trends data
 const trendsCache = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+// Cache for topic (mid) lookups — topic IDs are stable so cache permanently
+const topicIdCache = new Map();
 // Map max relative score (100) to an estimated absolute monthly search count
 const MAX_ESTIMATED_SEARCHES = Number(process.env.MAX_SEARCHES) || 2000000;
+
+/**
+ * Get topic ID (mid) for a given Pokémon name using google-trends-api autoComplete.
+ * Caches results (including null) permanently in `topicIdCache`.
+ * @param {string} pokemonName
+ * @returns {Promise<string|null>} topic mid like '/m/0dl567' or null if not found
+ */
+async function getTopicId(pokemonName) {
+  if (!pokemonName) return null;
+  const key = String(pokemonName).toLowerCase();
+  if (topicIdCache.has(key)) return topicIdCache.get(key);
+
+  const maxAttempts = 2;
+  const baseDelay = 150;
+  let lastErr = null;
+  let parsed = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const raw = await googleTrends.autoComplete({ keyword: pokemonName });
+      if (!raw) {
+        lastErr = new Error('Empty autoComplete response');
+        throw lastErr;
+      }
+
+      parsed = JSON.parse(raw);
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+    }
+  }
+
+  // If we never parsed a valid response, don't cache null permanently (transient)
+  if (!parsed) {
+    console.warn(`getTopicId failed for ${pokemonName}: ${lastErr && lastErr.message}`);
+    return null;
+  }
+
+  const suggestions = parsed?.default?.topics || [];
+
+  const pokemonTopic = suggestions.find(topic => {
+    if (!topic || !topic.title) return false;
+    const title = String(topic.title).toLowerCase();
+    const ttype = String(topic.type || '').toLowerCase();
+    return title === key && (ttype.includes('pok') || ttype.includes('video') || ttype === 'topic');
+  }) || suggestions.find(topic => String(topic.title || '').toLowerCase() === key);
+
+  if (pokemonTopic && pokemonTopic.mid) {
+    topicIdCache.set(key, pokemonTopic.mid);
+    console.log(`   Found topic: ${pokemonTopic.title} - ${pokemonTopic.mid}`);
+    return pokemonTopic.mid;
+  }
+
+  // Cache the fact we didn't find a topic to avoid repeated lookups
+  topicIdCache.set(key, null);
+  return null;
+}
 
 /**
  * Fetch Google Trends data for a given Pokémon name and country
@@ -37,9 +101,17 @@ async function fetchTrendsData(pokemonName, countryCode) {
 
   try {
     console.log(`🌐 Fetching trends: ${pokemonName} (${countryCode})`);
-    
-    // Add "pokemon" for better search results
-    const searchTerm = `${pokemonName} pokemon`;
+    // Try to resolve a Knowledge Graph topic ID (mid). If found, we'll use it
+    let topicId = null;
+    try {
+      topicId = await getTopicId(pokemonName);
+    } catch (err) {
+      topicId = null; // continue with keyword fallback
+    }
+
+    // Use topicId when available, otherwise fallback to keyword
+    const searchTerm = topicId || `${pokemonName} pokemon`;
+    console.log(`   Using: ${topicId ? `Topic ID ${topicId}` : `Keyword "${searchTerm}"`}`);
     // Helper: detect likely-HTML responses
     function isProbablyHTML(text) {
       if (!text || typeof text !== 'string') return false;
@@ -47,44 +119,61 @@ async function fetchTrendsData(pokemonName, countryCode) {
       return t.startsWith('<') || t.startsWith('<!doctype') || t.includes('<html');
     }
 
-    // Retry logic for Google Trends calls (exponential backoff)
-    const maxAttempts = 3;
-    const baseDelay = 300; // ms
-    let lastError = null;
-    let results = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        results = await googleTrends.interestOverTime({
-          keyword: searchTerm,
-          geo: countryCode,
-          startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
-        });
+    // Helper to fetch interestOverTime with retries and HTML detection
+    async function fetchInterestWithRetry(term) {
+      const maxAttempts = 3;
+      const baseDelay = 300; // ms
+      let lastError = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const results = await googleTrends.interestOverTime({
+            keyword: term,
+            geo: countryCode,
+            startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
+          });
 
-        if (isProbablyHTML(results)) {
-          // Got HTML (likely anti-bot or error page)
-          const snippet = results.slice(0, 300).replace(/\n/g, ' ');
-          throw new Error(`Non-JSON response from Google Trends (HTML/snippet): ${snippet}`);
-        }
+          if (isProbablyHTML(results)) {
+            const snippet = results.slice(0, 300).replace(/\n/g, ' ');
+            throw new Error(`Non-JSON response from Google Trends (HTML/snippet): ${snippet}`);
+          }
 
-        // Try parsing JSON; if this fails we'll catch below
-        const parsed = JSON.parse(results);
-        // success
-        var data = parsed;
-        break;
-      } catch (err) {
-        lastError = err;
-        console.warn(`Attempt ${attempt} failed for ${pokemonName} (${countryCode}):`, err.message);
-        if (attempt < maxAttempts) {
-          const delay = baseDelay * Math.pow(3, attempt - 1);
-          await new Promise(r => setTimeout(r, delay));
-          continue;
+          const parsed = JSON.parse(results);
+          return parsed;
+        } catch (err) {
+          lastError = err;
+          console.warn(`Attempt ${attempt} failed for ${pokemonName} (${countryCode}) using "${term}":`, err && err.message ? err.message : err);
+          if (attempt < maxAttempts) {
+            const delay = baseDelay * Math.pow(2, attempt - 1);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
         }
       }
+      throw lastError || new Error('Failed to fetch/parse trends data');
     }
 
-    // If data not set from successful parse, throw to be handled by outer catch
-    if (typeof data === 'undefined' || data == null) {
-      throw lastError || new Error('Failed to fetch/parse trends data');
+    // First try with topicId (if available) — otherwise searchTerm already contains keyword
+    let data = null;
+    try {
+      data = await fetchInterestWithRetry(searchTerm);
+    } catch (err) {
+      throw err;
+    }
+
+    // If we used a topicId but got an empty timeline or no useful data, retry once with keyword fallback
+    const timelineCheck = (d) => Array.isArray(d?.default?.timelineData) && d.default.timelineData.length > 0;
+    if (topicId && !timelineCheck(data)) {
+      console.warn(`Topic-based query returned no timeline for ${pokemonName}; retrying with keyword fallback.`);
+      try {
+        const keywordTerm = `${pokemonName} pokemon`;
+        const fallbackData = await fetchInterestWithRetry(keywordTerm);
+        // mark that we fell back to keyword
+        topicId = null;
+        data = fallbackData;
+      } catch (err) {
+        // keep original data (even if empty) and continue to error handling below
+        console.warn(`Keyword fallback also failed for ${pokemonName}:`, err && err.message ? err.message : err);
+      }
     }
     
     // Calculate metrics from timeline
@@ -103,6 +192,8 @@ async function fetchTrendsData(pokemonName, countryCode) {
         estimatedLabel: null,
         rawData: data,
         cached: false,
+        usedTopic: !!topicId,
+        topicId: topicId || null,
         fallback: true
       };
     }
@@ -143,6 +234,8 @@ async function fetchTrendsData(pokemonName, countryCode) {
       estimatedSearches,
       estimatedLabel: prettySearchLabel(estimatedSearches),
       rawData: data,
+      usedTopic: !!topicId,
+      topicId: topicId || null,
       cached: false,
       estimateMethod: 'preciseWeighted'
     };
@@ -150,7 +243,7 @@ async function fetchTrendsData(pokemonName, countryCode) {
     // Cache the fetched data
     trendsCache.set(cacheKey, { data: result, timestamp: Date.now() });
 
-    console.log(`✅ ${pokemonName}: score=${result.score}`);
+    console.log(`✅ ${pokemonName}: score=${result.score} ${result.usedTopic ? '(Entity)' : '(Keyword)'}`);
     return result;
     
   } catch (error) {
@@ -174,6 +267,8 @@ async function fetchTrendsData(pokemonName, countryCode) {
       rawData: null,
       cached: false,
       error: (error && error.message) || String(error),
+      usedTopic: false,
+      topicId: null,
       fallback: true
     };
   }

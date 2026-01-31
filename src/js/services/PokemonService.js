@@ -98,22 +98,32 @@ export class PokemonService {
 
             // Try to get a localized English pretty name from the species endpoint
             let prettyName = null;
+            // derive a sensible speciesName fallback from data if available
+            let speciesName = (data.species && data.species.name) ? data.species.name : (typeof data.name === 'string' ? data.name.split('-')[0] : null);
             try {
                 if (data.species && data.species.url) {
                     const spResp = await fetch(data.species.url);
                     if (spResp.ok) {
                         const sp = await spResp.json();
+                        // prefer the localized English name when available
                         const en = (sp.names || []).find(n => n.language && n.language.name === 'en');
                         if (en && en.name) prettyName = en.name;
+                        // update speciesName from species resource and fallback to a formatted species name
+                        if (sp && sp.name) speciesName = sp.name;
+                        if (!prettyName && sp && sp.name) prettyName = this.formatDisplayName(sp.name);
                     }
                 }
             } catch (e) {
                 // ignore failures to fetch species names
             }
 
+            // final fallback: format the derived speciesName if we still don't have a pretty name
+            if (!prettyName && speciesName) prettyName = this.formatDisplayName(speciesName);
+
             const pokemon = {
                 id: data.id,
                 name: data.name,
+                speciesName: speciesName || null,
                 prettyName: prettyName || null,
                 sprite: data.sprites.other['official-artwork'].front_default || data.sprites.front_default,
                 types: data.types.map(t => t.type.name),
@@ -160,6 +170,18 @@ export class PokemonService {
         return 9;                 // Generation IX:   Paldea
     }
 
+    /**
+     * Format a species name into a human-friendly display string.
+     * Examples: "mimikyu" => "Mimikyu", "mr-mime" => "Mr Mime"
+     * @param {string} speciesName
+     * @returns {string}
+     */
+    formatDisplayName(speciesName) {
+        if (!speciesName) return '';
+        // Replace hyphens and underscores with spaces, then capitalize each word
+        const parts = speciesName.replace(/[_-]+/g, ' ').split(' ');
+        return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+    }
     /**
      * Clear cached Pokémon data
      * @returns {void}
