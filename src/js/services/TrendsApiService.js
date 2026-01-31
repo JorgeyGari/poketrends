@@ -4,7 +4,11 @@
  */
 export class TrendsApiService {
   constructor() {
-    this.apiUrl = 'http://localhost:3002/trends';
+    // Use environment variable or fallback to localhost for development
+    const baseUrl = typeof __API_BASE_URL__ !== 'undefined' 
+      ? __API_BASE_URL__ 
+      : (process.env.VITE_API_BASE_URL || 'http://localhost:3002');
+    this.apiUrl = `${baseUrl}/trends`;
     this.cache = new Map();
   }
 
