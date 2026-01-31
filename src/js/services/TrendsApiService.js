@@ -9,10 +9,10 @@ export class TrendsApiService {
   }
 
   /**
-   * Get Google Trends score for a Pokémon
+   * Get Google Trends data for a Pokémon
    * @param {string} pokemonName - Name of the Pokémon
    * @param {string} countryCode - Country code (default: 'US')
-   * @returns {Promise<number>} Score from 0-100
+   * @returns {Promise<Object>} Object containing { score, estimatedSearches, estimatedLabel, rawData, ... }
    */
   async getTrendsScore(pokemonName, countryCode = 'US') {
     const cacheKey = `${pokemonName}_${countryCode}`;
@@ -31,27 +31,24 @@ export class TrendsApiService {
       }
 
       const data = await response.json();
-      
-      // Extract score
-      const score = data.score;
 
-      // Cache result
-      this.cache.set(cacheKey, score);
+      // Cache full data object
+      this.cache.set(cacheKey, data);
 
       // Log result type
       if (data.cached) {
-        console.log(`📦 Cached: ${pokemonName} = ${score}`);
+        console.log(`📦 Cached trends: ${pokemonName} = ${data.score}`);
       } else if (data.fallback) {
-        console.log(`⚠️ Fallback: ${pokemonName} = ${score}`);
+        console.log(`⚠️ Fallback trends: ${pokemonName} = ${data.score}`);
       } else {
-        console.log(`✅ Real trends: ${pokemonName} = ${score}`);
+        console.log(`✅ Real trends: ${pokemonName} = ${data.score}`);
       }
 
-      return score;
+      return data;
       
     } catch (error) {
       console.error(`Error fetching trends for ${pokemonName}:`, error);
-      return this.getFallbackScore(pokemonName);
+      return { score: this.getFallbackScore(pokemonName), fallback: true };
     }
   }
 

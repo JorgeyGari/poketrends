@@ -77,17 +77,24 @@ export class GameController {
 
       // Get popularity scores
       const country = this.gameState.selectedCountry;
-      const score1 = await this.popularityService.getPopularityScore(
+      const data1 = await this.popularityService.getPopularityScore(
         pokemon1.name,
         country
       );
-      const score2 = await this.popularityService.getPopularityScore(
+      const data2 = await this.popularityService.getPopularityScore(
         pokemon2.name,
         country
       );
 
-      pokemon1.setPopularityScore(score1);
-      pokemon2.setPopularityScore(score2);
+      // Keep numeric score for game logic, also attach timeline raw values
+      pokemon1.setPopularityScore(data1.score);
+      pokemon2.setPopularityScore(data2.score);
+      if (typeof pokemon1.setEstimatedSearches === 'function') pokemon1.setEstimatedSearches(data1.estimatedSearches, data1.estimatedLabel);
+      if (typeof pokemon2.setEstimatedSearches === 'function') pokemon2.setEstimatedSearches(data2.estimatedSearches, data2.estimatedLabel);
+      if (typeof pokemon1.setTimelineData === 'function') pokemon1.setTimelineData(data1.timelineSum, data1.timelineValues);
+      if (typeof pokemon2.setTimelineData === 'function') pokemon2.setTimelineData(data2.timelineSum, data2.timelineValues);
+      if (typeof pokemon1.setAvgScore === 'function') pokemon1.setAvgScore(data1.avgScore);
+      if (typeof pokemon2.setAvgScore === 'function') pokemon2.setAvgScore(data2.avgScore);
 
       this.currentPair = { left: pokemon1, right: pokemon2 };
 

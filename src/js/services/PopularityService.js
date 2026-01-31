@@ -12,17 +12,33 @@ export class PopularityService {
     }
 
     /**
-     * Get a popularity score for a pokemon name and country.
-     * Returns a number 0-100.
+     * Get a popularity object for a pokemon name and country.
+     * Returns an object { score, estimatedSearches, estimatedLabel, rawData, ... }
      */
     async getPopularityScore(pokemonName, countryCode = 'US') {
-        // Prefer Trends API but fall back to Pokémon base_experience if trends fail.
         try {
-            const score = await this.trends.getTrendsScore(pokemonName, countryCode);
-            return typeof score === 'number' ? score : Number(score) || this.getFallbackFromPokemon(pokemonName);
+            const data = await this.trends.getTrendsScore(pokemonName, countryCode);
+            // Ensure we return a consistent object
+            if (data && typeof data === 'object') {
+                return {
+                    score: typeof data.score === 'number' ? data.score : this.getFallbackFromPokemon(pokemonName),
+                    avgScore: data.avgScore != null ? Number(data.avgScore) : null,
+                    estimatedSearches: data.estimatedSearches != null ? Number(data.estimatedSearches) : null,
+                    estimatedLabel: data.estimatedLabel || null,
+                    timelineValues: Array.isArray(data.timelineValues) ? data.timelineValues.map(v => Number(v)) : null,
+                    timelineSum: data.timelineSum != null ? Number(data.timelineSum) : null,
+                    rawData: data.rawData || null,
+                    cached: !!data.cached,
+                    fallback: !!data.fallback
+                };
+            }
+            // If trends returned unexpected value, fallback
+            const fallbackScore = await this.getFallbackFromPokemon(pokemonName);
+            return { score: fallbackScore, estimatedSearches: null, estimatedLabel: null, fallback: true };
         } catch (e) {
             console.warn('PopularityService: trends fetch failed, falling back', e);
-            return this.getFallbackFromPokemon(pokemonName);
+            const fallbackScore = await this.getFallbackFromPokemon(pokemonName);
+            return { score: fallbackScore, estimatedSearches: null, estimatedLabel: null, fallback: true };
         }
     }
 

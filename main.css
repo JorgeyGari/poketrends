@@ -220,9 +220,74 @@ body {
   border-top: 2px solid rgba(255,255,255,0.3);
 }
 
+.popularity-score {
+  transition: opacity 0.45s ease, transform 0.45s ease;
+  transform-origin: top center;
+}
+
 .popularity-score.hidden {
   opacity: 0;
   visibility: hidden;
+  transform: translateY(8px) scale(0.98);
+}
+
+.popularity-score .score-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+}
+
+.popularity-score .score-value {
+  font-size: 2.6em;
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+
+.score-info {
+  display: inline-block;
+  background: rgba(255,255,255,0.12);
+  color: white;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 0.75em;
+  margin-left: 8px;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.popularity-score .score-unit {
+  font-size: 0.9em;
+  opacity: 0.95;
+  margin-top: 6px;
+}
+
+.popularity-score .score-sub {
+  margin-top: 6px;
+}
+
+.popularity-score .score-percent {
+  display: block;
+  font-size: 0.9em;
+  opacity: 0.9;
+}
+
+.score-avg {
+  display: block;
+  font-size: 1.05em;
+  opacity: 0.95;
+  margin-top: 6px;
+  color: rgba(255,255,255,0.95);
+}
+
+.score-sub-label {
+  display: inline-block;
+  font-size: 0.85em;
+  opacity: 0.9;
+  margin-right: 8px;
 }
 
 .score-label {

@@ -10,6 +10,11 @@ export class Pokemon {
         this.generation = generation;
         this.popularityScore = popularityScore;
         this.sprite = null;
+        this.estimatedSearches = null;
+        this.estimatedLabel = null;
+        this.timelineSum = null;
+        this.timelineValues = null;
+        this.avgScore = null;
     }
 
     /**
@@ -18,6 +23,20 @@ export class Pokemon {
      */
     setPopularityScore(score) {
         this.popularityScore = score;
+    }
+
+    setEstimatedSearches(value, label = null) {
+        this.estimatedSearches = typeof value === 'number' ? value : null;
+        this.estimatedLabel = label || null;
+    }
+
+    setTimelineData(sum, values = null) {
+        this.timelineSum = sum != null ? Number(sum) : null;
+        this.timelineValues = Array.isArray(values) ? values.map(v => Number(v)) : null;
+    }
+
+    setAvgScore(value) {
+        this.avgScore = value != null ? Number(value) : null;
     }
     
     /**
@@ -60,6 +79,9 @@ export class Pokemon {
     static fromData(data) {
         const pokemon = new Pokemon(data.id, data.name, data.generation, data.popularityScore);
         if (data.sprite) pokemon.setSpriteUrl(data.sprite);
+        if (data.estimatedSearches) pokemon.setEstimatedSearches(data.estimatedSearches, data.estimatedLabel);
+        if (data.timelineSum !== undefined) pokemon.setTimelineData(data.timelineSum, data.timelineValues);
+        if (data.avgScore !== undefined) pokemon.setAvgScore(data.avgScore);
         return pokemon;
     }
 }
