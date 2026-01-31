@@ -17,6 +17,8 @@ export class GameController {
     this.popularityService = new PopularityService();
     this.currentPair = null;
     this.pokemonList = null;
+    this.buffer = [];
+    this.BUFFER_SIZE = 3;
 
     this.loadSavedData();
   }
@@ -59,6 +61,7 @@ export class GameController {
   async startGame() {
     this.gameState.startGame();
     this.uiController.updateStats(this.gameState.getStats());
+    await this.initializeBuffer();
     await this.loadNextRound();
   }
 
@@ -66,45 +69,124 @@ export class GameController {
    * Load next round - get two random Pokémon from PokéAPI data
    */
   async loadNextRound() {
-    this.uiController.showLoading();
-
+    // Prefer showing the sprites/names immediately and fetch popularity in parallel
     try {
-      const [pokemon1, pokemon2] = await this.getRandomPokemonPair();
-
-      if (!pokemon1 || !pokemon2) {
-        throw new Error('Failed to load Pokémon for round');
+      if (!this.buffer || this.buffer.length < 2) {
+        await this.initializeBuffer();
       }
 
-      // Get popularity scores
-      const country = this.gameState.selectedCountry;
-      const data1 = await this.popularityService.getPopularityScore(
-        pokemon1.name,
-        country
-      );
-      const data2 = await this.popularityService.getPopularityScore(
-        pokemon2.name,
-        country
-      );
+      const pokemon1 = this.buffer[0];
+      const pokemon2 = this.buffer[1];
 
-      // Keep numeric score for game logic, also attach timeline raw values
-      pokemon1.setPopularityScore(data1.score);
-      pokemon2.setPopularityScore(data2.score);
-      if (typeof pokemon1.setEstimatedSearches === 'function') pokemon1.setEstimatedSearches(data1.estimatedSearches, data1.estimatedLabel);
-      if (typeof pokemon2.setEstimatedSearches === 'function') pokemon2.setEstimatedSearches(data2.estimatedSearches, data2.estimatedLabel);
-      if (typeof pokemon1.setTimelineData === 'function') pokemon1.setTimelineData(data1.timelineSum, data1.timelineValues);
-      if (typeof pokemon2.setTimelineData === 'function') pokemon2.setTimelineData(data2.timelineSum, data2.timelineValues);
-      if (typeof pokemon1.setAvgScore === 'function') pokemon1.setAvgScore(data1.avgScore);
-      if (typeof pokemon2.setAvgScore === 'function') pokemon2.setAvgScore(data2.avgScore);
-
+      // Show pair quickly but keep clicks disabled until popularity is loaded
       this.currentPair = { left: pokemon1, right: pokemon2 };
+      this.uiController.displayPokemonPair(pokemon1, pokemon2, false);
 
-      this.uiController.hideLoading();
-      this.uiController.displayPokemonPair(pokemon1, pokemon2);
+      // Fetch popularity scores in parallel
+      const country = this.gameState.selectedCountry;
+      const [data1, data2] = await Promise.all([
+        this.popularityService.getPopularityScore(pokemon1.name, country),
+        this.popularityService.getPopularityScore(pokemon2.name, country),
+      ]);
+
+      // Attach scores and extra data
+      if (data1) {
+        pokemon1.setPopularityScore(data1.score);
+        if (typeof pokemon1.setEstimatedSearches === 'function') pokemon1.setEstimatedSearches(data1.estimatedSearches, data1.estimatedLabel);
+        if (typeof pokemon1.setTimelineData === 'function') pokemon1.setTimelineData(data1.timelineSum, data1.timelineValues);
+        if (typeof pokemon1.setAvgScore === 'function') pokemon1.setAvgScore(data1.avgScore);
+      }
+      if (data2) {
+        pokemon2.setPopularityScore(data2.score);
+        if (typeof pokemon2.setEstimatedSearches === 'function') pokemon2.setEstimatedSearches(data2.estimatedSearches, data2.estimatedLabel);
+        if (typeof pokemon2.setTimelineData === 'function') pokemon2.setTimelineData(data2.timelineSum, data2.timelineValues);
+        if (typeof pokemon2.setAvgScore === 'function') pokemon2.setAvgScore(data2.avgScore);
+      }
+
+      // Enable clicks now that popularity data is available
+      this.uiController.enableClicks();
 
     } catch (error) {
       console.error('Error loading round:', error);
       this.uiController.showError('Error cargando datos. Intenta de nuevo.');
     }
+  }
+
+  /**
+   * Initialize buffer with BUFFER_SIZE unique Pokémon
+   */
+  async initializeBuffer() {
+    this.buffer = [];
+
+    if (!this.pokemonList || this.pokemonList.length === 0) return;
+
+    // Pick unique candidates first
+    let available = this.pokemonList.filter(
+      p => !this.gameState.isPokemonUsed(p.name)
+    );
+
+    if (available.length < this.BUFFER_SIZE) {
+      this.gameState.usedPokemon = [];
+      available = [...this.pokemonList];
+    }
+
+    const shuffled = available.sort(() => 0.5 - Math.random());
+    const picks = shuffled.slice(0, this.BUFFER_SIZE);
+
+    // Mark as used
+    picks.forEach(p => this.gameState.markPokemonUsed(p.name));
+
+    // Fetch details in parallel
+    const detailsArr = await Promise.all(
+      picks.map(p => this.pokemonService.getPokemonDetails(p.name))
+    );
+
+    detailsArr.forEach(details => {
+      if (details) this.buffer.push(this.createPokemonModel(details));
+    });
+  }
+
+  /**
+   * Fetch a single unused Pokemon from the list and return a Pokemon model
+   */
+  async fetchUniquePokemonModel() {
+    if (!this.pokemonList || this.pokemonList.length === 0) return null;
+
+    let available = this.pokemonList.filter(
+      p => !this.gameState.isPokemonUsed(p.name)
+    );
+
+    if (available.length === 0) {
+      this.gameState.usedPokemon = [];
+      available = [...this.pokemonList];
+    }
+
+    const shuffled = available.sort(() => 0.5 - Math.random());
+    const pick = shuffled[0];
+
+    // mark as used (by name)
+    this.gameState.markPokemonUsed(pick.name);
+
+    const details = await this.pokemonService.getPokemonDetails(pick.name);
+    if (!details) return null;
+    return this.createPokemonModel(details);
+  }
+
+  /**
+   * Ensure the pokemon model has popularity data; fetch if missing
+   */
+  async ensurePopularity(pokemon) {
+    if (typeof pokemon.popularityScore !== 'undefined' && pokemon.popularityScore !== null) return;
+    const country = this.gameState.selectedCountry;
+    const data = await this.popularityService.getPopularityScore(
+      pokemon.name,
+      country
+    );
+    if (!data) return;
+    if (typeof pokemon.setPopularityScore === 'function') pokemon.setPopularityScore(data.score);
+    if (typeof pokemon.setEstimatedSearches === 'function') pokemon.setEstimatedSearches(data.estimatedSearches, data.estimatedLabel);
+    if (typeof pokemon.setTimelineData === 'function') pokemon.setTimelineData(data.timelineSum, data.timelineValues);
+    if (typeof pokemon.setAvgScore === 'function') pokemon.setAvgScore(data.avgScore);
   }
 
   /**
@@ -189,8 +271,20 @@ export class GameController {
       this.uiController.updateStats(this.gameState.getStats());
       this.saveProgress();
 
-      setTimeout(() => {
-        this.loadNextRound();
+      setTimeout(async () => {
+        try {
+          // mark the middle pokemon (B) to keep its revealed data
+          if (this.buffer && this.buffer[1]) this.buffer[1].keepRevealed = true;
+          // slide the window: remove the first (A), keep B and C, append new D
+          this.buffer.shift();
+          const newP = await this.fetchUniquePokemonModel();
+          if (newP) this.buffer.push(newP);
+          await this.loadNextRound();
+        } catch (e) {
+          console.error('Error preparing next buffered round:', e);
+          // fallback to normal next-round loader
+          this.loadNextRound();
+        }
       }, GAME_CONFIG.ROUND_DELAY);
 
     } else {

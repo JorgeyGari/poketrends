@@ -23,9 +23,19 @@ export class UIController {
     this.countrySelector.mount('#country-selector-container');
   }
 
-  displayPokemonPair(pokemon1, pokemon2) {
-    this.gameBoard.setPokemon(pokemon1, pokemon2);
+  displayPokemonPair(pokemon1, pokemon2, enableClicks = true) {
+    const preserveLeft = !!pokemon1 && !!pokemon1.keepRevealed;
+    const preserveRight = !!pokemon2 && !!pokemon2.keepRevealed;
+    this.gameBoard.setPokemon(pokemon1, pokemon2, { preserveLeft, preserveRight });
+    if (enableClicks) this.gameBoard.enableClicks(); else this.gameBoard.disableClicks();
+  }
+
+  enableClicks() {
     this.gameBoard.enableClicks();
+  }
+
+  disableClicks() {
+    this.gameBoard.disableClicks();
   }
 
   revealScores(pokemon1, pokemon2, selectedSide, correct) {

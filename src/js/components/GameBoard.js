@@ -85,7 +85,7 @@ export class GameBoard {
     }
   }
 
-  setPokemon(pokemon1, pokemon2) {
+  setPokemon(pokemon1, pokemon2, options = {}) {
     // Left Pokemon
     document.getElementById('sprite-left').src = pokemon1.sprite;
     document.getElementById('sprite-left').alt = pokemon1.name;
@@ -98,7 +98,10 @@ export class GameBoard {
     document.getElementById('name-right').textContent = pokemon2.getDisplayName();
     document.getElementById('gen-right').textContent = `Gen ${pokemon2.generation}`;
 
-    this.resetCards();
+    const preserveLeft = !!options.preserveLeft;
+    const preserveRight = !!options.preserveRight;
+
+    this.resetCards(preserveLeft, preserveRight, pokemon1, pokemon2);
   }
 
   revealScores(pokemon1, pokemon2) {
@@ -119,22 +122,43 @@ export class GameBoard {
     // (tooltip removed) show timelineSum as part of the UI via labels if needed
 
     // Animate main count (integers) and avgScore below (2-decimal)
-    this.animateCount(leftValueEl, leftTarget, 900, 0);
-    this.animateCount(rightValueEl, rightTarget, 900, 0);
+    // If a pokemon was preserved from previous round, show static values (no animation)
+    const leftPreserved = !!pokemon1 && !!pokemon1.keepRevealed;
+    const rightPreserved = !!pokemon2 && !!pokemon2.keepRevealed;
+
+    if (leftPreserved) {
+      leftValueEl.textContent = this.formatNumber(leftTarget, 0);
+    } else {
+      this.animateCount(leftValueEl, leftTarget, 900, 0);
+    }
+
+    if (rightPreserved) {
+      rightValueEl.textContent = this.formatNumber(rightTarget, 0);
+    } else {
+      this.animateCount(rightValueEl, rightTarget, 900, 0);
+    }
 
     const leftAvg = (pokemon1.avgScore != null) ? Number(pokemon1.avgScore) : null;
     const rightAvg = (pokemon2.avgScore != null) ? Number(pokemon2.avgScore) : null;
     if (leftAvgEl) {
-      if (leftAvg != null) this.animateCount(leftAvgEl, leftAvg, 700, 2);
-      else leftAvgEl.textContent = '';
+      if (leftAvg != null) {
+        if (leftPreserved) leftAvgEl.textContent = this.formatNumber(leftAvg, 2);
+        else this.animateCount(leftAvgEl, leftAvg, 700, 2);
+      } else leftAvgEl.textContent = '';
     }
     if (rightAvgEl) {
-      if (rightAvg != null) this.animateCount(rightAvgEl, rightAvg, 700, 2);
-      else rightAvgEl.textContent = '';
+      if (rightAvg != null) {
+        if (rightPreserved) rightAvgEl.textContent = this.formatNumber(rightAvg, 2);
+        else this.animateCount(rightAvgEl, rightAvg, 700, 2);
+      } else rightAvgEl.textContent = '';
     }
 
     document.getElementById('score-left').classList.remove('hidden');
     document.getElementById('score-right').classList.remove('hidden');
+
+    // Clear transient preserve flags now that we've revealed the values
+    if (pokemon1 && pokemon1.keepRevealed) delete pokemon1.keepRevealed;
+    if (pokemon2 && pokemon2.keepRevealed) delete pokemon2.keepRevealed;
   }
 
   // Simple formatting helper
@@ -175,14 +199,46 @@ export class GameBoard {
     }
   }
 
-  resetCards() {
+  resetCards(preserveLeft = false, preserveRight = false, pokemon1 = null, pokemon2 = null) {
     [this.leftCard, this.rightCard].forEach(card => {
       card.classList.remove('correct', 'incorrect', 'disabled');
     });
 
-    document.querySelectorAll('.popularity-score').forEach(el => {
-      el.classList.add('hidden');
-    });
+    // Hide both by default
+    const leftScoreEl = document.getElementById('score-left');
+    const rightScoreEl = document.getElementById('score-right');
+
+    // Helper to populate static values from model
+    const populateStatic = (scoreEl, pokemon) => {
+      if (!scoreEl || !pokemon) return;
+      const valueEl = scoreEl.querySelector('.score-value');
+      const avgEl = scoreEl.querySelector('.score-avg');
+
+      const target = (typeof pokemon.estimatedSearches === 'number' && pokemon.estimatedSearches != null)
+        ? pokemon.estimatedSearches
+        : (typeof pokemon.timelineSum === 'number' ? pokemon.timelineSum : Math.round(pokemon.popularityScore || 0));
+
+      const avg = (pokemon.avgScore != null) ? Number(pokemon.avgScore) : null;
+
+      if (valueEl) valueEl.textContent = this.formatNumber(target, 0);
+      if (avgEl) avgEl.textContent = avg != null ? this.formatNumber(avg, 2) : '';
+      scoreEl.classList.remove('hidden');
+    };
+
+    if (preserveLeft && pokemon1) {
+      populateStatic(leftScoreEl, pokemon1);
+    } else if (leftScoreEl) {
+      leftScoreEl.classList.add('hidden');
+    }
+
+    if (preserveRight && pokemon2) {
+      populateStatic(rightScoreEl, pokemon2);
+    } else if (rightScoreEl) {
+      rightScoreEl.classList.add('hidden');
+    }
+
+    // Do not clear keepRevealed here; it will be removed after reveal to
+    // ensure revealScores can detect preserved sides and skip animations.
   }
 
   enableClicks() {
