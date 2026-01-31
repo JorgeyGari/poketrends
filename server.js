@@ -40,14 +40,52 @@ async function fetchTrendsData(pokemonName, countryCode) {
     
     // Add "pokemon" for better search results
     const searchTerm = `${pokemonName} pokemon`;
-    
-    const results = await googleTrends.interestOverTime({
-      keyword: searchTerm,
-      geo: countryCode,
-      startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
-    });
-    
-    const data = JSON.parse(results);
+    // Helper: detect likely-HTML responses
+    function isProbablyHTML(text) {
+      if (!text || typeof text !== 'string') return false;
+      const t = text.trim().toLowerCase();
+      return t.startsWith('<') || t.startsWith('<!doctype') || t.includes('<html');
+    }
+
+    // Retry logic for Google Trends calls (exponential backoff)
+    const maxAttempts = 3;
+    const baseDelay = 300; // ms
+    let lastError = null;
+    let results = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        results = await googleTrends.interestOverTime({
+          keyword: searchTerm,
+          geo: countryCode,
+          startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
+        });
+
+        if (isProbablyHTML(results)) {
+          // Got HTML (likely anti-bot or error page)
+          const snippet = results.slice(0, 300).replace(/\n/g, ' ');
+          throw new Error(`Non-JSON response from Google Trends (HTML/snippet): ${snippet}`);
+        }
+
+        // Try parsing JSON; if this fails we'll catch below
+        const parsed = JSON.parse(results);
+        // success
+        var data = parsed;
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Attempt ${attempt} failed for ${pokemonName} (${countryCode}):`, err.message);
+        if (attempt < maxAttempts) {
+          const delay = baseDelay * Math.pow(3, attempt - 1);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      }
+    }
+
+    // If data not set from successful parse, throw to be handled by outer catch
+    if (typeof data === 'undefined' || data == null) {
+      throw lastError || new Error('Failed to fetch/parse trends data');
+    }
     
     // Calculate metrics from timeline
     const timeline = data.default?.timelineData || [];
@@ -111,19 +149,31 @@ async function fetchTrendsData(pokemonName, countryCode) {
     
     // Cache the fetched data
     trendsCache.set(cacheKey, { data: result, timestamp: Date.now() });
-    
-    console.log(`✅ ${pokemonName}: score=${avgScore}`);
+
+    console.log(`✅ ${pokemonName}: score=${result.score}`);
     return result;
     
   } catch (error) {
-    console.error(`❌ Error fetching trends for ${pokemonName} in ${countryCode}:`, error.message);
-    
-    // Return fallback score
+    console.error(`❌ Error fetching trends for ${pokemonName} in ${countryCode}:`, error && error.message ? error.message : error);
+
+    // Log a short snippet if available (helpful for anti-bot HTML pages)
+    if (error && error.message && error.message.length > 0) {
+      console.error('  Details:', error.message.slice(0, 400));
+    }
+
+    // Return fallback score but keep the API shape
+    const fallbackScore = getFallbackScore(pokemonName);
     return {
       pokemonName,
       countryCode,
-      score: getFallbackScore(pokemonName),
-      error: error.message,
+      score: fallbackScore,
+      timelineValues: [],
+      timelineSum: 0,
+      estimatedSearches: Math.round((fallbackScore / 100) * MAX_ESTIMATED_SEARCHES),
+      estimatedLabel: null,
+      rawData: null,
+      cached: false,
+      error: (error && error.message) || String(error),
       fallback: true
     };
   }

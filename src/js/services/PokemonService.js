@@ -25,21 +25,30 @@ export class PokemonService {
      */
     async fetchPokemonList(limit = GAME_CONFIG.POKEMON_LIMIT, offset = 0) {
         try {
-            // First check cache
+            // First check cache (only use cache when a specific limit is requested)
             const cached = StorageService.loadPokemonList();
-            if (cached) return cached;
-        
+            if (cached && limit > 0) return cached;
 
-        const url = `${this.baseUrl}/pokemon?limit=${limit}&offset=${offset}`;
+        // If limit is 0 or not provided, determine total count from API and fetch all
+        let fetchLimit = limit;
+        if (!fetchLimit || fetchLimit <= 0) {
+            const metaUrl = `${this.baseUrl}/pokemon?limit=1&offset=0`;
+            const metaResp = await fetch(metaUrl);
+            if (!metaResp.ok) throw new Error('Failed to fetch Pokémon meta count');
+            const metaData = await metaResp.json();
+            fetchLimit = metaData.count || 0;
+        }
+
+        // Use the species endpoint to avoid alternative forms (species represent vanilla Pokémon)
+        const url = `${this.baseUrl}/pokemon-species?limit=${fetchLimit}&offset=${offset}`;
         const response = await fetch(url);
 
-        if (!response.ok) throw new Error('Failed to fetch Pokémon list');
+        if (!response.ok) throw new Error('Failed to fetch Pokémon species list');
 
         const data = await response.json();
-        const pokemonList = data.results.map((pokemon, index) => ({
-            name: pokemon.name,
-            url: pokemon.url,
-            id: offset + index + 1, // Calculate ID based on offset and index
+        const pokemonList = data.results.map((species) => ({
+            name: species.name,
+            url: species.url,
         }));
 
         // Cache the list
@@ -62,23 +71,58 @@ export class PokemonService {
         try {
             // Check cache first
             if (this.detailsCache.has(query)) return this.detailsCache.get(query);
-            const url = `${this.baseUrl}/pokemon/${query}`;
-            const response = await fetch(url);
+            // First try fetching as a direct pokemon resource
+            let response = await fetch(`${this.baseUrl}/pokemon/${query}`);
+            let data = null;
+
+            if (!response.ok) {
+                // If not found, try resolving as a species to get the default variety
+                try {
+                    const speciesResp = await fetch(`${this.baseUrl}/pokemon-species/${query}`);
+                    if (speciesResp.ok) {
+                        const speciesData = await speciesResp.json();
+                        const defaultVar = (speciesData.varieties || []).find(v => v.is_default === true);
+                        const varName = defaultVar && defaultVar.pokemon && defaultVar.pokemon.name;
+                        if (varName) {
+                            response = await fetch(`${this.baseUrl}/pokemon/${varName}`);
+                        }
+                    }
+                } catch (e) {
+                    // ignore and fall through to error handling
+                }
+            }
 
             if (!response.ok) throw new Error(`Failed to fetch details for Pokémon: ${query}`);
 
-            const data = await response.json();
+            data = await response.json();
+
+            // Try to get a localized English pretty name from the species endpoint
+            let prettyName = null;
+            try {
+                if (data.species && data.species.url) {
+                    const spResp = await fetch(data.species.url);
+                    if (spResp.ok) {
+                        const sp = await spResp.json();
+                        const en = (sp.names || []).find(n => n.language && n.language.name === 'en');
+                        if (en && en.name) prettyName = en.name;
+                    }
+                }
+            } catch (e) {
+                // ignore failures to fetch species names
+            }
 
             const pokemon = {
                 id: data.id,
                 name: data.name,
+                prettyName: prettyName || null,
                 sprite: data.sprites.other['official-artwork'].front_default || data.sprites.front_default,
                 types: data.types.map(t => t.type.name),
                 generation: this.getGenerationById(data.id),
                 baseExperience: data.base_experience,
             };
 
-            // Cache the details
+            // Cache the details for both the resolved name and the original query key
+            this.detailsCache.set(data.name, pokemon);
             this.detailsCache.set(query, pokemon);
 
             return pokemon;

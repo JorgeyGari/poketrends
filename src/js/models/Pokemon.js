@@ -7,6 +7,7 @@ export class Pokemon {
     constructor(id, name, generation, popularityScore = null) {
         this.id = id;
         this.name = name;
+        this.prettyName = null;
         this.generation = generation;
         this.popularityScore = popularityScore;
         this.sprite = null;
@@ -68,7 +69,10 @@ export class Pokemon {
      * @returns {string} Formatted name
      */
     getDisplayName() {
-        return this.name.charAt(0).toUpperCase() + this.name.slice(1);
+        if (this.prettyName && typeof this.prettyName === 'string') return this.prettyName;
+        // Fallback: replace hyphens with spaces and title-case each word
+        const s = (this.name || '').replace(/-/g, ' ');
+        return s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
     }
 
     /**
