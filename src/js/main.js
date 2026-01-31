@@ -17,6 +17,13 @@ class App {
       this.uiController = new UIController();
       this.gameController = new GameController(this.uiController);
 
+      // Clear cached Pokémon data on startup so localized/updated names appear
+      // This removes the saved species list and any in-memory details cache
+      StorageService.clearPokemonList();
+      if (this.gameController && this.gameController.pokemonService) {
+        this.gameController.pokemonService.clearCache();
+      }
+
       // Set up callbacks
       this.uiController.setGuessCallback((side) => {
         this.gameController.handleGuess(side);
