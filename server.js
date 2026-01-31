@@ -10,9 +10,8 @@ import Bottleneck from 'bottleneck';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
-// COMMENTED OUT - Services not yet implemented
-// import { HarvestService } from './services/HarvestService.js';
-// import { ContinuousRefreshService } from './services/ContinuousRefreshService.js';
+import { HarvestService } from './services/HarvestService.js';
+import { ContinuousRefreshService } from './services/ContinuousRefreshService.js';
 
 const app = express();
 const PORT = 3002;
@@ -75,8 +74,6 @@ async function saveTopicCacheToDisk() {
 // Load cache on startup
 loadTopicCacheFromDisk().catch(() => {});
 
-// COMMENTED OUT - HarvestService and ContinuousRefreshService not yet implemented
-/*
 const harvestService = new HarvestService(
   fetchTrendsData,
   async () => {
@@ -97,12 +94,11 @@ const refreshService = new ContinuousRefreshService({
   }
 }, dataPath);
 
-const COOLDOWN_HOURS = 72;
+const COOLDOWN_HOURS = 0;
 setTimeout(() => {
   console.log('🚀 Starting continuous refresh service...');
   refreshService.start();
 }, COOLDOWN_HOURS * 60 * 60 * 1000);
-*/
 
 // Map max relative score (100) to an estimated absolute monthly search count
 const MAX_ESTIMATED_SEARCHES = Number(process.env.MAX_SEARCHES) || 2000000;
@@ -555,8 +551,6 @@ app.get('/admin/clear-cache', (req, res) => {
   });
 });
 
-// COMMENTED OUT - Harvest service endpoints (requires HarvestService)
-/*
 app.get('/data/trends', (req, res) => {
   const data = harvestService.getCurrentData();
   res.json(data);
@@ -605,7 +599,6 @@ app.post('/admin/refresh/resume', (req, res) => {
   refreshService.resume();
   res.json({ success: true, message: 'Resumed' });
 });
-*/
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -616,8 +609,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// COMMENTED OUT - Graceful shutdown for refresh service
-/*
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, stopping refresh service...');
   await refreshService.stop();
@@ -629,7 +620,6 @@ process.on('SIGINT', async () => {
   await refreshService.stop();
   process.exit(0);
 });
-*/
 
 // Start the server
 app.listen(PORT, () => {
