@@ -74,17 +74,17 @@ export class UIController {
 
   showGameOver(stats) {
     this.modal.show({
-      title: '¡Juego Terminado!',
+      title: '¡Fin de la partida!',
       content: `
         <div class="game-over-content">
           <p class="final-score">Racha final: <strong>${stats.currentStreak}</strong></p>
           <p>Mejor racha: <strong>${stats.bestStreak}</strong></p>
-          <p>Promedio: <strong>${stats.averageStreak}</strong> por juego</p>
+          <p>Promedio: <strong>${stats.averageStreak}</strong> por partida</p>
         </div>
       `,
       buttons: [
         {
-          text: 'Jugar de Nuevo',
+          text: 'Otra partida',
           action: () => this.onRestartGame(),
           primary: true,
         },
