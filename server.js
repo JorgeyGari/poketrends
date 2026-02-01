@@ -51,6 +51,7 @@ const limiter = new Bottleneck({
 const proxyUrl = process.env.PROXY_URL || process.env.TRENDS_PROXY || '';
 const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
 const trendsUserAgent = process.env.TRENDS_USER_AGENT || '';
+const packageRetries = Number(process.env.TRENDS_PACKAGE_RETRIES) || 3;
 
 // File-backed topicIdCache persistence
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -195,6 +196,7 @@ async function getTopicId(pokemonName) {
       try {
         const raw = await limiter.schedule(() => googleTrends.autoComplete({
           keyword: q,
+          retries: packageRetries,
           ...(proxyAgent ? { agent: proxyAgent } : {}),
           ...(trendsUserAgent ? { userAgent: trendsUserAgent } : {})
         }));
@@ -276,30 +278,42 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null, reque
   
   try {
     console.log(`🌐 Fetching trends: ${pokemonName} (${countryCode})`);
-    // Try to resolve a Knowledge Graph topic ID (mid). If found, we'll use it
-    let topicId = null;
-    try {
-      topicId = await getTopicId(pokemonName);
-    } catch (err) {
-      topicId = null; // continue with keyword fallback
-    }
+      // Warm-up delay for first request (helps avoid immediate blocks)
+      if (metrics.totalRequests === 1) {
+        console.log('⏳ First Trends request - applying warm-up delay (5s)');
+        await new Promise(r => setTimeout(r, 5000));
+      }
+
+      // Try to resolve a Knowledge Graph topic ID (mid). If found, we'll use it
+      let topicId = null;
+      try {
+        topicId = await getTopicId(pokemonName);
+      } catch (err) {
+        topicId = null; // continue with keyword fallback
+      }
 
     // Use topicId when available, otherwise fallback to keyword
     const searchTerm = topicId || `${pokemonName} pokemon`;
     console.log(`   Using: ${topicId ? `Topic ID ${topicId}` : `Keyword "${searchTerm}"`}`);
     
-    // Helper: detect likely-HTML responses or anti-bot pages
+    // Helper: detect likely-HTML responses or anti-bot pages (with logging)
     function isProbablyHTML(text) {
       if (!text || typeof text !== 'string') return false;
       const t = text.trim().toLowerCase();
-      if (t.startsWith('<') || t.startsWith('<!doctype') || t.includes('<html')) return true;
+      // Log a short sample to help debugging of unexpected starts like 'l lang="en"'
+      try {
+        console.log(`[HTML Check] sample: "${t.substring(0, 60).replace(/\n/g, ' ')}"`);
+      } catch (e) {}
+
+      if (t.startsWith('<!doctype') || t.startsWith('<html') || t.includes('<html')) return true;
+      // Catch cases where HTML tags are slightly mangled or start mid-string (e.g., 'l lang="en"')
+      if (t.includes('lang=') || t.includes('<meta') || t.includes('</head>') || t.includes('<body')) return true;
       // Common anti-bot / block indicators
       const markers = ['captcha', 'recaptcha', 'please try again', 'verify', 'access denied', 'forbidden', 'unusual traffic', 'meta name="robots"', 'check your browser'];
       for (const m of markers) {
         if (t.includes(m)) return true;
       }
-      // Heuristic: server-side error pages often contain <meta> and </head>
-      if (t.includes('<meta') && t.includes('</head>')) return true;
+
       return false;
     }
 
@@ -321,6 +335,7 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null, reque
             keyword: term,
             geo: countryCode,
             startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
+            retries: packageRetries,
             ...(localAgent ? { agent: localAgent } : {}),
             ...(localUserAgent ? { userAgent: localUserAgent } : {})
           }));
