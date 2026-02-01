@@ -1,7 +1,6 @@
 import Bottleneck from 'bottleneck';
 import fs from 'fs/promises';
 import path from 'path';
-import https from 'https';
 
 export class ContinuousRefreshService {
   constructor(trendsService, dataPath) {
@@ -20,11 +19,11 @@ export class ContinuousRefreshService {
     
     // Ultra-conservative rate limiting
     this.limiter = new Bottleneck({
-      minTime: 45000,           // 45 seconds between requests (~1.33/min)
+      minTime: 25000,           // 25 seconds between requests (2.4/min)
       maxConcurrent: 1,
-      reservoir: 1,             // Start with 1 request
-      reservoirRefreshAmount: 1,
-      reservoirRefreshInterval: 60000  // Refill 1 every minute
+      reservoir: 2,             // Start with 2 requests
+      reservoirRefreshAmount: 2,
+      reservoirRefreshInterval: 60000  // Refill 2 every minute
     });
     
     // Add jitter before each request
@@ -42,18 +41,14 @@ export class ContinuousRefreshService {
     
     this.isRunning = true;
     this.isPaused = false;
-    // Startup delay to avoid immediate requests on boot
-    const startupDelay = 5 * 60 * 1000; // 5 minutes
-    console.log(`🔄 Starting continuous refresh service in ${startupDelay/1000}s...`);
-    await new Promise(resolve => setTimeout(resolve, startupDelay));
-    console.log('▶️  Beginning refresh loop');
-
+    console.log('🔄 Starting continuous refresh service...');
+    
     // Run in background loop
     this.refreshLoop().catch(err => {
       console.error('❌ Refresh service crashed:', err);
       this.isRunning = false;
     });
-
+    
     return true;
   }
   
@@ -91,14 +86,7 @@ export class ContinuousRefreshService {
           continue;
         }
         
-          // Random pause when switching to a different Pokémon to mimic human pacing
-          if (this.stats.currentPokemon && this.stats.currentPokemon !== pokemon.name) {
-            const pauseTime = 120000 + Math.random() * 180000; // 2-5 min
-            console.log(`⏳ Switching to ${pokemon.name}, pausing ${Math.round(pauseTime/1000)}s...`);
-            await new Promise(resolve => setTimeout(resolve, pauseTime));
-          }
-
-          this.stats.currentPokemon = pokemon.name;
+        this.stats.currentPokemon = pokemon.name;
         
         // Fetch with rate limiting
         const result = await this.limiter.schedule(() => 
@@ -207,65 +195,13 @@ export class ContinuousRefreshService {
   }
   
   async getAllPokemon() {
-    // Try reading from local cache first
-    const cacheFile = path.join(path.dirname(this.dataPath), 'pokemon_names.json');
-    try {
-      const content = await fs.readFile(cacheFile, 'utf8');
-      const parsed = JSON.parse(content);
-      // Validate structure: array of objects with id and name
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name) {
-        console.log(`✅ Loaded ${parsed.length} Pokémon from cache`);
-        return parsed;
-      }
-    } catch (err) {
-      // ignore and fall back to network
+    // Fetch from PokéAPI or use cached list
+    // For now, return placeholder
+    const pokemonList = [];
+    for (let i = 1; i <= 1025; i++) {
+      pokemonList.push({ id: i, name: `pokemon-${i}` });
     }
-
-    // Helper: simple HTTPS GET that returns parsed JSON
-    const fetchJson = (url) => new Promise((resolve, reject) => {
-      https.get(url, (res) => {
-        const { statusCode } = res;
-        if (statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`Request Failed. Status Code: ${statusCode}`));
-        }
-
-        let raw = '';
-        res.setEncoding('utf8');
-        res.on('data', (chunk) => { raw += chunk; });
-        res.on('end', () => {
-          try {
-            const parsed = JSON.parse(raw);
-            resolve(parsed);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      }).on('error', reject);
-    });
-
-    try {
-      console.log('Fetching Pokémon list from PokéAPI...');
-      const data = await fetchJson('https://pokeapi.co/api/v2/pokemon?limit=1025');
-      const pokemonList = (data.results || []).map((p, idx) => ({ id: idx + 1, name: p.name }));
-
-      // Save cache (best-effort)
-      try {
-        await fs.writeFile(cacheFile, JSON.stringify(pokemonList, null, 2));
-      } catch (err) {
-        console.warn('Failed to write Pokémon cache:', err.message || err);
-      }
-
-      if (pokemonList.length > 0) {
-        console.log(`✅ Fetched ${pokemonList.length} Pokémon from PokéAPI`);
-      }
-  
     return pokemonList;
-    } catch (err) {
-      console.error('Failed to fetch Pokémon list from PokéAPI:', err.message || err);
-      // As a last resort, return an empty list to avoid generating invalid names
-      return [];
-    }
   }
   
   async loadData() {

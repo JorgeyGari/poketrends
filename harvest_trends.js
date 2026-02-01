@@ -33,8 +33,14 @@ async function fetchPokemonList(limit = 0) {
  * Call local trends API endpoint
  */
 async function fetchTrendsData(pokemonName, countryCode, pokemonId) {
-  const url = `${TRENDS_URL}/trends?pokemonName=${encodeURIComponent(pokemonName)}&countryCode=${countryCode}&pokemonId=${pokemonId}`;
-  
+  let url = `${TRENDS_URL}/trends?pokemonName=${encodeURIComponent(pokemonName)}&countryCode=${countryCode}&pokemonId=${pokemonId}`;
+  if (global.globalOptions && global.globalOptions.proxy) {
+    url += `&proxyUrl=${encodeURIComponent(global.globalOptions.proxy)}`;
+  }
+  if (global.globalOptions && global.globalOptions.userAgent) {
+    url += `&userAgent=${encodeURIComponent(global.globalOptions.userAgent)}`;
+  }
+
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -66,6 +72,10 @@ function parseArgs() {
       options.limit = parseInt(arg.split('=')[1], 10);
     } else if (arg.startsWith('--output=')) {
       options.output = arg.split('=')[1];
+    } else if (arg.startsWith('--proxy=')) {
+      options.proxy = arg.split('=')[1];
+    } else if (arg.startsWith('--user-agent=')) {
+      options.userAgent = arg.split('=')[1];
     }
   }
 
@@ -106,6 +116,8 @@ async function main() {
       console.log('⚖️  Balanced mode: ~90 min, expect ~10% fallback rate');
   }
 
+  // Save options for use by fetchTrendsData
+  global.globalOptions = options;
   // Create harvest service
   const service = new HarvestService(fetchTrendsData, () => fetchPokemonList(options.limit));
 

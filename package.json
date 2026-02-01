@@ -19,7 +19,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "https-proxy-agent": "^6.0.0"
   },
   "devDependencies": {
     "eslint": "^9.39.2",

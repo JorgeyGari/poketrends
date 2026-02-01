@@ -1,11 +1,12 @@
 /**
-* @file Service for fetching Google Trends data.
-* Handles interactions with Google Trends API.
-*/
+ * @file Service for fetching Google Trends data.
+ * Handles interactions with Google Trends API.
+ */
 
 import express from 'express';
 import cors from 'cors';
 import googleTrends from 'google-trends-api';
+import HttpsProxyAgent from 'https-proxy-agent';
 import Bottleneck from 'bottleneck';
 import fs from 'fs';
 import fsp from 'fs/promises';
@@ -39,6 +40,11 @@ const limiter = new Bottleneck({
   maxConcurrent: 1,
 });
 
+// Optional proxy and UA configuration to reduce ban risk when enabled via environment
+const proxyUrl = process.env.PROXY_URL || process.env.TRENDS_PROXY || '';
+const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+const trendsUserAgent = process.env.TRENDS_USER_AGENT || '';
+
 // File-backed topicIdCache persistence
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const TOPIC_CACHE_FILE = path.join(DATA_DIR, 'topic_cache.json');
@@ -66,6 +72,7 @@ async function saveTopicCacheToDisk() {
     await fsp.mkdir(DATA_DIR, { recursive: true });
     await fsp.writeFile(tmp, JSON.stringify(obj), 'utf8');
     await fsp.rename(tmp, TOPIC_CACHE_FILE);
+    // console.log(`Saved ${Object.keys(obj).length} topicId entries to ${TOPIC_CACHE_FILE}`);
   } catch (err) {
     console.warn('Failed to save topic cache:', err && err.message ? err.message : err);
   }
@@ -74,9 +81,10 @@ async function saveTopicCacheToDisk() {
 // Load cache on startup
 loadTopicCacheFromDisk().catch(() => {});
 
+// Initialize HarvestService
 const harvestService = new HarvestService(
-  fetchTrendsData,
-  async () => {
+  fetchTrendsData, // trendsClient
+  async () => { // pokemonListFetcher
     const response = await fetch('https://pokeapi.co/api/v2/pokemon-species?limit=10000');
     const data = await response.json();
     return (data.results || []).map(r => {
@@ -87,6 +95,7 @@ const harvestService = new HarvestService(
   }
 );
 
+// Initialize ContinuousRefreshService
 const dataPath = path.join(process.cwd(), 'data', 'pokemon_trends.json');
 const refreshService = new ContinuousRefreshService({
   getTrends: async (name, country, id) => {
@@ -94,7 +103,8 @@ const refreshService = new ContinuousRefreshService({
   }
 }, dataPath);
 
-const COOLDOWN_HOURS = 0;
+// Auto-start continuous refresh after cooldown period
+const COOLDOWN_HOURS = 72;  // Change to 0 after initial cooldown period
 setTimeout(() => {
   console.log('🚀 Starting continuous refresh service...');
   refreshService.start();
@@ -108,10 +118,10 @@ const GOOGLE_TRENDS_START_YEAR = 2004;
 const BASELINE_YEAR = 2004;
 
 /**
-* Get the release year for a Pokémon by ID
-* @param {number} pokemonId
-* @returns {number} Release year
-*/
+ * Get the release year for a Pokémon by ID
+ * @param {number} pokemonId
+ * @returns {number} Release year
+ */
 function getPokemonReleaseYear(pokemonId) {
   // Special mapping for specific Pokémon with staggered releases (DLC, regional variants, etc.)
   const specialReleases = {
@@ -134,13 +144,12 @@ function getPokemonReleaseYear(pokemonId) {
   if (pokemonId <= 905) return 2019;  // Gen VIII
   return 2022;                        // Gen IX
 }
-
 /**
-* Calculate the adjusted MAX_ESTIMATED_SEARCHES ceiling based on Pokémon's release year.
-* Normalizes for the fact that newer Pokémon have less historical search volume.
-* @param {number} pokemonId
-* @returns {number} Adjusted ceiling for estimated searches
-*/
+ * Calculate the adjusted MAX_ESTIMATED_SEARCHES ceiling based on Pokémon's release year.
+ * Normalizes for the fact that newer Pokémon have less historical search volume.
+ * @param {number} pokemonId
+ * @returns {number} Adjusted ceiling for estimated searches
+ */
 function getAdjustedMaxSearchesCeiling(pokemonId) {
   const releaseYear = getPokemonReleaseYear(pokemonId);
   const currentYear = new Date().getFullYear();
@@ -152,6 +161,8 @@ function getAdjustedMaxSearchesCeiling(pokemonId) {
   const yearsInTrends = currentYear - GOOGLE_TRENDS_START_YEAR;
   
   // Proportion of search history available for this Pokémon
+  // e.g., Gen 1 (2004): 22 years available / 22 years since release = 100% baseline
+  // e.g., Gen 9 (2022): 22 years available / 4 years since release = ~18% (capped at that)
   const proportionAvailable = Math.min(1, yearsSinceRelease / yearsInTrends);
   
   // Scale the baseline ceiling proportionally
@@ -161,11 +172,11 @@ function getAdjustedMaxSearchesCeiling(pokemonId) {
 }
 
 /**
-* Get topic ID (mid) for a given Pokémon name using google-trends-api autoComplete.
-* Caches results (including null) permanently in `topicIdCache`.
-* @param {string} pokemonName
-* @returns {Promise<string|null>} topic mid like '/m/0dl567' or null if not found
-*/
+ * Get topic ID (mid) for a given Pokémon name using google-trends-api autoComplete.
+ * Caches results (including null) permanently in `topicIdCache`.
+ * @param {string} pokemonName
+ * @returns {Promise<string|null>} topic mid like '/m/0dl567' or null if not found
+ */
 async function getTopicId(pokemonName) {
   if (!pokemonName) return null;
   const key = String(pokemonName).toLowerCase();
@@ -181,7 +192,11 @@ async function getTopicId(pokemonName) {
   for (const q of queries) {
     for (let attempt = 1; attempt <= Math.max(2, maxAttempts); attempt++) {
       try {
-        const raw = await limiter.schedule(() => googleTrends.autoComplete({ keyword: q }));
+        const raw = await limiter.schedule(() => googleTrends.autoComplete({
+          keyword: q,
+          ...(proxyAgent ? { agent: proxyAgent } : {}),
+          ...(trendsUserAgent ? { userAgent: trendsUserAgent } : {})
+        }));
         if (!raw) {
           lastErr = new Error('Empty autoComplete response');
           throw lastErr;
@@ -240,12 +255,12 @@ async function getTopicId(pokemonName) {
 }
 
 /**
-* Fetch Google Trends data for a given Pokémon name and country
-* @param {string} pokemonName - Name of the Pokémon
-* @param {string} countryCode - Country code (e.g., 'US', 'JP')
-* @param {number} pokemonId - Pokémon ID (optional, used for generation-based ceiling)
-* @returns {Promise} - Trends data
-*/
+ * Fetch Google Trends data for a given Pokémon name and country
+ * @param {string} pokemonName - Name of the Pokémon
+ * @param {string} countryCode - Country code (e.g., 'US', 'JP')
+ * @param {number} pokemonId - Pokémon ID (optional, used for generation-based ceiling)
+ * @returns {Promise} - Trends data
+ */
 async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
   const cacheKey = `${pokemonName}_${countryCode}`;
   const cached = trendsCache.get(cacheKey);
@@ -255,9 +270,7 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
     console.log(`📦 Cache hit: ${pokemonName} (${countryCode})`);
     return cached.data;
   }
-  
   metrics.totalRequests++;
-  
   try {
     console.log(`🌐 Fetching trends: ${pokemonName} (${countryCode})`);
     // Try to resolve a Knowledge Graph topic ID (mid). If found, we'll use it
@@ -271,7 +284,6 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
     // Use topicId when available, otherwise fallback to keyword
     const searchTerm = topicId || `${pokemonName} pokemon`;
     console.log(`   Using: ${topicId ? `Topic ID ${topicId}` : `Keyword "${searchTerm}"`}`);
-    
     // Helper: detect likely-HTML responses
     function isProbablyHTML(text) {
       if (!text || typeof text !== 'string') return false;
@@ -284,7 +296,6 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
       const maxAttempts = 4;
       const baseDelay = 1000; // ms
       let lastError = null;
-      
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           // Use Bottleneck to space requests
@@ -292,6 +303,8 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
             keyword: term,
             geo: countryCode,
             startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
+            ...(proxyAgent ? { agent: proxyAgent } : {}),
+            ...(trendsUserAgent ? { userAgent: trendsUserAgent } : {})
           }));
 
           if (isProbablyHTML(results)) {
@@ -306,7 +319,6 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
         } catch (err) {
           lastError = err;
           const msg = (err && err.message) ? String(err.message).toLowerCase() : '';
-          
           if (msg.includes('429') || msg.includes('too many requests') || msg.includes('rate limit')) {
             metrics.rateLimit429++;
             console.warn(`Rate limit detected for ${pokemonName}. Pausing longer before retry.`);
@@ -327,7 +339,6 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
               continue;
             }
           }
-          
           if (attempt < maxAttempts) {
             continue;
           }
@@ -400,7 +411,6 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
     // Map precise score to estimated searches using generation-adjusted ceiling
     const ceiling = pokemonId != null ? getAdjustedMaxSearchesCeiling(pokemonId) : MAX_ESTIMATED_SEARCHES;
     const estimatedSearches = Math.round((preciseScore / 100) * ceiling);
-    
     function prettySearchLabel(n) {
       if (n >= 1000000) return `~${(n / 1000000).toFixed(1)}M searches`;
       if (n >= 1000) return `~${(n / 1000).toFixed(0)}k searches`;
@@ -465,10 +475,11 @@ async function fetchTrendsData(pokemonName, countryCode, pokemonId = null) {
 }
 
 /**
-* Get fallback score for popular Pokémon
-*/
+ * Get fallback score for popular Pokémon
+ */
 function getFallbackScore(pokemonName) {
   // Deterministic fallback based on name to avoid hard-coded celebrity bias.
+  // This mirrors the frontend fallback behavior (stable, reproducible values in 30-79 range).
   const baseName = (pokemonName || '').toString().toLowerCase();
   // compute simple seed from name
   const seed = baseName.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
@@ -486,8 +497,8 @@ app.get('/trends', async (req, res) => {
   const { pokemonName, countryCode, pokemonId } = req.query;
   
   if (!pokemonName || !countryCode) {
-    return res.status(400).json({  
-      error: 'Missing required parameters: pokemonName, countryCode'  
+    return res.status(400).json({ 
+      error: 'Missing required parameters: pokemonName, countryCode' 
     });
   }
 
@@ -496,14 +507,18 @@ app.get('/trends', async (req, res) => {
     const data = await fetchTrendsData(pokemonName, countryCode, id);
     res.json(data);
   } catch (error) {
-    res.status(500).json({  
+    res.status(500).json({ 
       error: 'Failed to fetch trends data',
-      message: error.message  
+      message: error.message 
     });
   }
 });
 
 // Admin: clear caches (trends and topic id cache)
+// Usage:
+//  - GET /admin/clear-cache           -> clears all caches
+//  - GET /admin/clear-cache?pokemonName=pikachu  -> clears trends keys matching name
+//  - GET /admin/clear-cache?topic=pikachu        -> clears specific topicIdCache entry
 app.get('/admin/clear-cache', (req, res) => {
   const { pokemonName, topic } = req.query;
 
@@ -551,13 +566,16 @@ app.get('/admin/clear-cache', (req, res) => {
   });
 });
 
+// Serve pre-computed trends data to frontend
 app.get('/data/trends', (req, res) => {
   const data = harvestService.getCurrentData();
   res.json(data);
 });
 
+// Admin endpoint: trigger background harvest
 app.post('/admin/harvest', async (req, res) => {
   const { targetPokemon, targetCountries, aggressive } = req.body;
+  
   const result = await harvestService.startBackgroundHarvest({
     concurrency: 1,
     minTime: aggressive ? 15000 : 12000,
@@ -565,9 +583,11 @@ app.post('/admin/harvest', async (req, res) => {
     targetPokemon,
     targetCountries
   });
+  
   res.json(result);
 });
 
+// Admin endpoint: harvest status
 app.get('/admin/harvest/status', (req, res) => {
   res.json({
     isRunning: harvestService.isRunning,
@@ -576,6 +596,7 @@ app.get('/admin/harvest/status', (req, res) => {
   });
 });
 
+// Admin endpoint: refresh service status
 app.get('/admin/refresh/status', (req, res) => {
   res.json(refreshService.getStatus());
 });
@@ -602,13 +623,14 @@ app.post('/admin/refresh/resume', (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({  
-    status: 'ok',  
+  res.json({ 
+    status: 'ok', 
     cacheSize: trendsCache.size,
-    uptime: process.uptime()  
+    uptime: process.uptime() 
   });
 });
 
+// Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, stopping refresh service...');
   await refreshService.stop();
@@ -622,7 +644,17 @@ process.on('SIGINT', async () => {
 });
 
 // Start the server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Google Trends Service running on http://localhost:${PORT}`);
   console.log(`📊 Endpoint: GET /trends?pokemonName=pikachu&countryCode=US`);
+  console.log(`📦 Data endpoint: GET /data/trends`);
+  
+  // Auto-start harvest on first run if no data file exists
+  const trendsDataPath = path.resolve(process.cwd(), 'data/pokemon_trends.json');
+  if (!fs.existsSync(trendsDataPath)) {
+    console.log('🌱 No trends data found, starting initial harvest...');
+    await harvestService.startBackgroundHarvest({ aggressive: true });
+  } else {
+    console.log(`📦 Loaded existing trends data: ${harvestService.getCurrentData()?.metadata?.totalPokemon || 0} Pokémon`);
+  }
 });

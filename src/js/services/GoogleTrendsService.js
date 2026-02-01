@@ -6,6 +6,7 @@
 import express from 'express';
 import cors from 'cors';
 import googleTrends from 'google-trends-api';
+import HttpsProxyAgent from 'https-proxy-agent';
 
 const app = express();
 const PORT = 3001;
@@ -32,18 +33,47 @@ async function fetchTrendsData(pokemonName, countryCode) {
         return cached.data;
     }
 
+    // Optional proxy and UA from environment
+    const proxyUrl = process.env.PROXY_URL || process.env.TRENDS_PROXY || '';
+    const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+    const trendsUserAgent = process.env.TRENDS_USER_AGENT || '';
+
     try {
-        const results = await googleTrends.interestOverTime({
-            keyword: pokemonName,
-            geo: countryCode,
-            timeframe: 'today 12-m',
-        });
+        const maxAttempts = 3;
+        const baseDelay = 1000;
+        let lastErr = null;
 
-        const data = JSON.parse(results);
-        // Cache the fetched data
-        trendsCache.set(cacheKey, { data, timestamp: Date.now() });
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const results = await googleTrends.interestOverTime({
+                    keyword: pokemonName,
+                    geo: countryCode,
+                    timeframe: 'today 12-m',
+                    ...(proxyAgent ? { agent: proxyAgent } : {}),
+                    ...(trendsUserAgent ? { userAgent: trendsUserAgent } : {})
+                });
 
-        return data;
+                // Detect HTML blocks
+                const text = (results || '').toString().trim().toLowerCase();
+                if (text.startsWith('<') || text.includes('captcha') || text.includes('verify')) {
+                    throw new Error('Non-JSON block detected');
+                }
+
+                const data = JSON.parse(results);
+                // Cache the fetched data
+                trendsCache.set(cacheKey, { data, timestamp: Date.now() });
+                return data;
+            } catch (err) {
+                lastErr = err;
+                if (attempt < maxAttempts) {
+                    const backoff = Math.pow(2, attempt) * baseDelay + Math.random() * 500;
+                    await new Promise(r => setTimeout(r, backoff));
+                    continue;
+                }
+            }
+        }
+
+        throw lastErr || new Error('Failed to fetch/parse trends data');
     } catch (error) {
         console.error(`Error fetching trends for ${pokemonName} in ${countryCode}:`, error);
         throw error;

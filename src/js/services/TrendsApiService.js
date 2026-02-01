@@ -113,24 +113,43 @@ export class TrendsApiService {
     if (pokemonId != null) {
       url += `&pokemonId=${pokemonId}`;
     }
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
+
+    const maxAttempts = 3;
+    const baseDelay = 500; // ms
+    let attempt = 0;
+    let lastErr = null;
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          // Surface 429 specially so callers can back off if needed
+          const status = response.status;
+          throw new Error(`API returned ${status}`);
+        }
+
+        const data = await response.json();
+        // Log result type
+        if (data.cached) {
+          console.log(`📦 Cached trends: ${pokemonName} = ${data.score}`);
+        } else if (data.fallback) {
+          console.log(`⚠️ Fallback trends: ${pokemonName} = ${data.score}`);
+        } else {
+          console.log(`✅ Real trends: ${pokemonName} = ${data.score}`);
+        }
+
+        return data;
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= maxAttempts) break;
+        const backoff = Math.pow(2, attempt) * baseDelay + Math.random() * 500;
+        await this.delay(backoff);
+      }
     }
 
-    const data = await response.json();
+    throw lastErr || new Error('Failed to fetch live trends API');
     
-    // Log result type
-    if (data.cached) {
-      console.log(`📦 Cached trends: ${pokemonName} = ${data.score}`);
-    } else if (data.fallback) {
-      console.log(`⚠️ Fallback trends: ${pokemonName} = ${data.score}`);
-    } else {
-      console.log(`✅ Real trends: ${pokemonName} = ${data.score}`);
-    }
-
-    return data;
   }
 
   /**
@@ -143,8 +162,8 @@ export class TrendsApiService {
     const scores = new Map();
     
     for (const name of pokemonNames) {
-      // Add 300ms delay between requests to avoid overwhelming the API
-      await this.delay(300);
+      // Add randomized delay between requests (300-800ms) to avoid bursts
+      await this.delay(300 + Math.random() * 500);
       const score = await this.getTrendsScore(name, countryCode);
       scores.set(name, score);
     }
