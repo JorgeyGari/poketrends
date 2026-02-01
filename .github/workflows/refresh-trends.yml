@@ -1,0 +1,79 @@
+name: Refresh Trends Data
+
+on:
+  schedule:
+    # Run every Sunday at 3 AM UTC (4 AM CET - early morning, low traffic)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # 4 hours max (harvest can take 2-3 hours)
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git operations
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run harvest (balanced mode)
+        env:
+          # Optional: set aggressive mode if you want fewer fallbacks
+          # AGGRESSIVE: 'true'
+          LIMIT: ''  # Leave empty to harvest all 1025 Pokémon
+        run: |
+          echo "Starting trends data harvest..."
+          node scripts/harvest_trends.js --output data/pokemon_trends.json
+          echo "Harvest complete!"
+      
+      - name: Verify data file
+        run: |
+          if [ -f data/pokemon_trends.json ]; then
+            echo "✅ Data file created successfully"
+            node -e "const data = require('./data/pokemon_trends.json'); console.log('📊 Stats:', {totalPokemon: data.metadata?.totalPokemon, successRate: data.metadata?.successRate + '%', lastUpdate: data.lastUpdate});"
+          else
+            echo "❌ Data file not found!"
+            exit 1
+          fi
+      
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+      
+      - name: Commit and push updated data
+        run: |
+          # Check if there are changes
+          if git diff --quiet data/pokemon_trends.json; then
+            echo "✅ No changes in data (already up to date)"
+          else
+            echo "📝 Changes detected, committing..."
+            git add data/pokemon_trends.json
+            git commit -m "📊 Update: Refresh trends data via scheduled harvest
+            
+            - Updated stale Pokémon entries
+            - Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+            - Triggered by: GitHub Actions scheduled workflow"
+            git push origin main
+            echo "✅ Data pushed to main branch"
+          fi
+      
+      - name: Notify on success
+        if: success()
+        run: echo "✅ Weekly harvest completed successfully!"
+      
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Harvest failed! Check logs above for details."
+          exit 1
