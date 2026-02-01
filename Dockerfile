@@ -1,5 +1,5 @@
 # Build backend Node.js service for Google Trends API proxy
-FROM node:18-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
